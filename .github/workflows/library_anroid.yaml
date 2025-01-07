@@ -1,0 +1,171 @@
+name: Build Android Library
+
+on:
+  push:
+    branches:
+      - master
+      - 'dev/android'
+  pull_request:
+    branches:
+      - master
+      - 'dev/android'
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        #android config
+        ort_version: ['1.19.0']
+        android_architecture: [arm64-v8a, armeabi-v7a, x86, x86_64]
+        android_platform: [android-29]
+        #os build
+        os: [ubuntu-latest]
+        architecture: [x64]
+        build_type: [Release]
+
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          clean: true
+
+      - name: Debug OS Value
+        run: |
+          echo "Matrix OS: ${{ matrix.os }}"
+
+      # 1
+      - name: Set OS variable based on Unix 
+        if: ${{ matrix.os == 'ubuntu-latest'}}
+        run: |
+          if [ "${{ matrix.os }}" == "ubuntu-latest" ]; then
+            echo "OS_PLATFORM=linux" >> $GITHUB_ENV
+            echo "EXTENSION=tgz" >> $GITHUB_ENV
+          elif [ "${{ matrix.os }}" == "macos-latest" ]; then
+            echo "OS_PLATFORM=osx" >> $GITHUB_ENV
+            echo "EXTENSION=tgz" >> $GITHUB_ENV
+          fi
+
+      # 1b
+      # ref:https://github.com/actions/starter-workflows/blob/main/ci/cmake-multi-platform.yml
+      - name: Set reusable strings
+        # Turn repeated input strings (such as the build output directory) into step outputs. These step outputs can be used throughout the workflow file.
+        id: strings
+        shell: bash
+        run: |
+          echo "build-output-dir=${{ github.workspace }}/build" >> "$GITHUB_OUTPUT"
+
+      # 2
+      - name: Download a file
+        run: >
+          curl -o onnxruntime-training-android-${{ matrix.ort_version }}.zip
+          https://repo1.maven.org/maven2/com/microsoft/onnxruntime/onnxruntime-training-android/${{ matrix.ort_version }}/onnxruntime-training-android-${{ matrix.ort_version }}.aar
+
+      - name: Extract ort and rename folder (Unix)
+        # rename .aar to .zip
+        run: |
+          mkdir ${{ github.workspace }}/libs 
+          mv onnxruntime-training-android-${{ matrix.ort_version }}.zip ${{ github.workspace }}/libs
+          cd ${{ github.workspace }}/libs
+          ls -la ${{ github.workspace }}
+          unzip onnxruntime-training-android-${{ matrix.ort_version }}.zip -d ${{ github.workspace }}/libs/onnxruntime
+
+      - name: setup ndk
+        uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r27b
+          add-to-path: false
+
+      # 3 CORE
+      - uses: seanmiddleditch/gha-setup-ninja@master
+      - run: >
+          cmake -G Ninja .
+          -B ${{ steps.strings.outputs.build-output-dir }} 
+          -DCMAKE_INSTALL_PREFIX=${{ steps.strings.outputs.build-output-dir }}/install
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+          -DANDROID_PLATFORM=${{ matrix.android_platform }}
+          -DBUILD_SHARED_LIBS=1
+          -DANDROID_ABI=${{ matrix.android_architecture }}
+          -DCMAKE_TOOLCHAIN_FILE=${{ steps.setup-ndk.outputs.ndk-path }}/build/cmake/android.toolchain.cmake
+
+      - name: Build
+        # Build your program with the given configuration. Note that --config is needed because the default Windows generator is a multi-config generator (Visual Studio generator).
+        run: >
+          cmake --build ${{ steps.strings.outputs.build-output-dir }} 
+          --config ${{ matrix.build_type }}
+          --target install
+
+      # 4
+      - if: ${{ matrix.os == 'ubuntu-latest'}}
+        name: Upload Build Artifact for Linux
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ env.OS_PLATFORM }}-${{ matrix.architecture }}-ort_${{ matrix.ort_version }}-android_platform_${{ matrix.android_platform }}-adb_${{ matrix.android_architecture }} # add prefix ort_
+          path: ${{ steps.strings.outputs.build-output-dir }}/install/**
+          retention-days: 1
+
+  final:
+    strategy:
+      matrix:
+        #android config
+        ort_version: ['1.19.0']
+        android_platform: [android-29]
+        #os build
+        os: [ubuntu-latest]
+        architecture: [x64]
+
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: set up env
+        run: |
+          if [ "${{ matrix.os }}" == "ubuntu-latest" ]; then
+            echo "OS_PLATFORM=linux" >> $GITHUB_ENV
+          elif [ "${{ matrix.os }}" == "macos-latest" ]; then
+            echo "OS_PLATFORM=osx" >> $GITHUB_ENV
+          fi
+
+      - name: Download arm64-v8a Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: binary-${{ env.OS_PLATFORM }}-${{ matrix.architecture }}-ort_${{ matrix.ort_version }}-android_platform_${{ matrix.android_platform }}-adb_arm64-v8a # add prefix ort_
+          path: ${{ github.workspace }}/arm64-v8a
+
+      - name: Download armeabi-v7a Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: binary-${{ env.OS_PLATFORM }}-${{ matrix.architecture }}-ort_${{ matrix.ort_version }}-android_platform_${{ matrix.android_platform }}-adb_armeabi-v7a # add prefix ort_
+          path: ${{ github.workspace }}/armeabi-v7a
+
+      - name: Download x86 Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: binary-${{ env.OS_PLATFORM }}-${{ matrix.architecture }}-ort_${{ matrix.ort_version }}-android_platform_${{ matrix.android_platform }}-adb_x86 # add prefix ort_
+          path: ${{ github.workspace }}/x86
+
+      - name: Download x86_64 Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: binary-${{ env.OS_PLATFORM }}-${{ matrix.architecture }}-ort_${{ matrix.ort_version }}-android_platform_${{ matrix.android_platform }}-adb_x86_64 # add prefix ort_
+          path: ${{ github.workspace }}/x86_64
+
+      - name: Collect headers
+        run: |
+          mkdir ${{ github.workspace }}/ortcxx
+          cp -r ${{ github.workspace }}/arm64-v8a/include ${{ github.workspace }}/ortcxx
+          
+      - name: Collect all .so files
+        run: |
+          mkdir ${{ github.workspace }}/ortcxx/libs
+          cp -r ${{ github.workspace }}/arm64-v8a/lib ${{ github.workspace }}/ortcxx/libs/arm64-v8a
+          cp -r ${{ github.workspace }}/armeabi-v7a/lib ${{ github.workspace }}/ortcxx/libs/armeabi-v7a
+          cp -r ${{ github.workspace }}/x86/lib ${{ github.workspace }}/ortcxx/libs/x86
+          cp -r ${{ github.workspace }}/x86_64/lib ${{ github.workspace }}/ortcxx/libs/x86_64
+
+      - name: Archive all .so files and headers
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ env.OS_PLATFORM }}-${{ matrix.architecture }}-ort_${{ matrix.ort_version }}-android_platform_${{ matrix.android_platform }} # add prefix ort_
+          path: ${{ github.workspace }}/ortcxx

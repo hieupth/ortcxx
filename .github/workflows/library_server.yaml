@@ -1,0 +1,136 @@
+name: Build Server Library
+
+on:
+  push:
+    branches:
+      - master
+      - 'dev/v0.1'
+  pull_request:
+    branches:
+      - master
+      - 'dev/v0.1'
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        ort_version: ['1.19.0']
+        architecture: [x64]
+        #ref: https://github.com/actions/starter-workflows/blob/main/ci/cmake-multi-platform.yml
+        os: [ubuntu-latest, windows-latest]
+        build_type: [Release]
+        c_compiler: [gcc, clang, cl]
+        include:
+          - os: windows-latest
+            c_compiler: cl
+            cpp_compiler: cl
+          - os: ubuntu-latest
+            c_compiler: gcc
+            cpp_compiler: g++
+          - os: ubuntu-latest
+            c_compiler: clang
+            cpp_compiler: clang++
+        exclude:
+          - os: windows-latest
+            c_compiler: gcc
+          - os: windows-latest
+            c_compiler: clang
+          - os: ubuntu-latest
+            c_compiler: cl
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          clean: true
+
+      - name: Debug OS Value
+        run: |
+          echo "Matrix OS: ${{ matrix.os }}"
+
+      # 1a
+      - name: Set OS variable based on Unix 
+        if: ${{ matrix.os == 'ubuntu-latest' || matrix.os == 'macos-latest' }}
+        run: |
+          if [ "${{ matrix.os }}" == "ubuntu-latest" ]; then
+            echo "OS_PLATFORM=linux" >> $GITHUB_ENV
+            echo "EXTENSION=tgz" >> $GITHUB_ENV
+          elif [ "${{ matrix.os }}" == "macos-latest" ]; then
+            echo "OS_PLATFORM=osx" >> $GITHUB_ENV
+            echo "EXTENSION=tgz" >> $GITHUB_ENV
+          fi
+      # 1b
+      - name: Set OS variable based on Windows 
+        if: ${{ matrix.os == 'windows-latest' }}
+        run: |
+          echo "OS_PLATFORM=win" >> $env:GITHUB_ENV
+          echo "EXTENSION=zip" >> $env:GITHUB_ENV
+
+      # 1c
+      # ref:https://github.com/actions/starter-workflows/blob/main/ci/cmake-multi-platform.yml
+      - name: Set reusable strings
+        # Turn repeated input strings (such as the build output directory) into step outputs. These step outputs can be used throughout the workflow file.
+        id: strings
+        shell: bash
+        run: |
+          if [ "${{ matrix.os }}" == "windows-latest" ]; then
+            echo "build-output-dir=${{ github.workspace }}\build" >> "$GITHUB_OUTPUT"
+          elif [ "${{ matrix.os }}" != "windows-latest" ]; then
+            echo "build-output-dir=${{ github.workspace }}/build" >> "$GITHUB_OUTPUT"
+          fi
+
+      # 2
+      - uses: robinraju/release-downloader@v1
+        with:
+          repository: 'microsoft/onnxruntime'
+          tag: 'v${{ matrix.ort_version }}' # include v prefix
+          fileName: 'onnxruntime-${{ env.OS_PLATFORM }}-${{ matrix.architecture }}-${{ matrix.ort_version }}.${{ env.EXTENSION }}'
+          out-file-path: 'libs'
+
+      - name: Extract ort and rename folder (Unix)
+        if: ${{ matrix.os != 'windows-latest' }} # ubuntu & macos
+        run: |
+          tar -xzf ${{ github.workspace }}/libs/onnxruntime-${{ env.OS_PLATFORM }}-${{ matrix.architecture }}-${{ matrix.ort_version }}.${{ env.EXTENSION }} -C ${{ github.workspace }}/libs
+          mv ${{ github.workspace }}/libs/onnxruntime-${{ env.OS_PLATFORM }}-${{ matrix.architecture }}-${{ matrix.ort_version }} ${{ github.workspace }}/libs/onnxruntime
+
+      - name: Extract ort and rename folder (Windows)
+        if: ${{ matrix.os == 'windows-latest' }}
+        run: |
+          7z x ${{ github.workspace }}\libs\onnxruntime-${{ env.OS_PLATFORM }}-${{ matrix.architecture }}-${{ matrix.ort_version }}.${{ env.EXTENSION }} -o${{ github.workspace }}\libs
+          Rename-Item ${{ github.workspace }}\libs\onnxruntime-${{ env.OS_PLATFORM }}-${{ matrix.architecture }}-${{ matrix.ort_version }} ${{ github.workspace }}\libs\onnxruntime
+        shell: pwsh
+
+      # 3: CORE
+      - name: Configure CMake
+        # Configure CMake in a 'build' subdirectory. `CMAKE_BUILD_TYPE` is only required if you are using a single-configuration generator such as make.
+        # See https://cmake.org/cmake/help/latest/variable/CMAKE_BUILD_TYPE.html?highlight=cmake_build_type
+        run: >
+          cmake -B ${{ steps.strings.outputs.build-output-dir }}
+          -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/install
+          -DCMAKE_CXX_COMPILER=${{ matrix.cpp_compiler }}
+          -DCMAKE_C_COMPILER=${{ matrix.c_compiler }}
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+          -S ${{ github.workspace }}
+
+      - name: Build
+        # Build your program with the given configuration. Note that --config is needed because the default Windows generator is a multi-config generator (Visual Studio generator).
+        run: cmake --build ${{ steps.strings.outputs.build-output-dir }} --config ${{ matrix.build_type }} --target install
+
+      # 4a
+      - if: ${{ matrix.os != 'windows-latest'}}
+        name: Upload Build Artifact for Linux
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.c_compiler }}-${{ env.OS_PLATFORM }}-${{ matrix.architecture }}-ort_${{ matrix.ort_version }} # add prefix ort_
+          path: ${{ github.workspace }}/install/**
+
+      # 4b
+      - if: ${{ matrix.os == 'windows-latest'}}
+        name: Upload Build Artifact for Windows
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.c_compiler }}-${{ env.OS_PLATFORM }}-${{ matrix.architecture }}-ort_${{ matrix.ort_version }}
+          path: ${{ github.workspace }}\install\**
+
+

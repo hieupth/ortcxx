@@ -1,18 +1,19 @@
 cmake_minimum_required(VERSION 3.13)
 project(ortcxx VERSION 0.1.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
+cmake_policy(SET CMP0111 NEW)
 
 # -----------------------------------------------------------------------------
 # Setup dependencies.
 # -----------------------------------------------------------------------------
-include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/onnxruntimeConfig.cmake)
-find_package(onnxruntime)
+# include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/onnxruntimeConfig.cmake)
+# find_package(onnxruntime)
 
-#* ONNXANROID
-# file(GLOB LIB_ONNXRUNTIME_FILES 
-# ${PROJECT_SOURCE_DIR}/libs/onnxruntime-android/jni/${ANDROID_ABI}/*.so
-# )
-# message("LIB_ONNXRUNTIME_FILES: ${LIB_ONNXRUNTIME_FILES}")
+#* ONNXRUNTIME ANROID
+file(GLOB LIB_ONNXRUNTIME_FILES 
+  ${PROJECT_SOURCE_DIR}/libs/onnxruntime/jni/${ANDROID_ABI}/*.so
+)
+message("LIB_ONNXRUNTIME_FILES: ${LIB_ONNXRUNTIME_FILES}")
 
 
 # -----------------------------------------------------------------------------
@@ -22,15 +23,21 @@ set(LIB_NAME ortcxx)
 set(LIB_HEADERS ${CMAKE_CURRENT_SOURCE_DIR}/include)
 set(LIB_SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/modules)
 set(LIB_PRIV_HEADERS ${CMAKE_CURRENT_SOURCE_DIR}/src/headers)
+# for windows share libs
+if (WIN32)
+    set (CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS TRUE)
+    set (BUILD_SHARED_LIBS TRUE)
+endif ()
+
 file(GLOB LIB_SRC_FILES 
   ${LIB_SRC_DIR}/**/*.cpp
 )
 add_library(${LIB_NAME} SHARED ${LIB_HEADERS} ${LIB_PRIV_HEADERS} ${LIB_SRC_FILES})
-target_link_libraries(${LIB_NAME} onnxruntime)
+# target_link_libraries(${LIB_NAME} onnxruntime)
 
 ## ANDROID
-# target_link_libraries(${LIB_NAME} ${LIB_ONNXRUNTIME_FILES})
-# target_include_directories(${LIB_NAME} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/libs/onnxruntime-android/headers)
+target_link_libraries(${LIB_NAME} ${LIB_ONNXRUNTIME_FILES})
+target_include_directories(${LIB_NAME} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/libs/onnxruntime/headers)
 
 # 
 target_include_directories(${LIB_NAME} PUBLIC $<BUILD_INTERFACE:${LIB_HEADERS}> $<INSTALL_INTERFACE:include>)
@@ -49,12 +56,11 @@ target_link_libraries(pipeline ortcxx)
 #-----------------------------------------------------------------------------
 # Install header and library.
 #-----------------------------------------------------------------------------
-## ANDROID
-# install(TARGETS ${LIB_NAME} hello pipeline
-#         RUNTIME DESTINATION bin
-#         LIBRARY DESTINATION lib
-#         ARCHIVE DESTINATION lib)
+install(TARGETS ${LIB_NAME} hello pipeline
+        RUNTIME DESTINATION bin
+        LIBRARY DESTINATION lib
+        ARCHIVE DESTINATION lib)
 
-# install(DIRECTORY ${LIB_HEADERS}/ DESTINATION include)
+install(DIRECTORY ${LIB_HEADERS}/ DESTINATION include)
 
-# install(DIRECTORY ${LIB_PRIV_HEADERS}/ DESTINATION include/${LIB_NAME})
+install(DIRECTORY ${LIB_PRIV_HEADERS}/ DESTINATION include/${LIB_NAME})
